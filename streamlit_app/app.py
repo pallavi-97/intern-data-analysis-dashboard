@@ -1,29 +1,59 @@
 import streamlit as st
 import pandas as pd
-import altair as alt
 import plotly.express as px
+import altair as alt
 
-st.title("Data Analysis Dashboard")
+st.title("Orders Over Time Dashboard")
 
-# Load Excel file
+# --- Load Excel file ---
 df = pd.read_excel("Data Analytics Intern Assignment - Data Set.xlsx", engine='openpyxl')
 
-# Numeric columns
+# --- Detect numeric columns ---
 numeric_columns = df.select_dtypes(include='number').columns.tolist()
-data_view = st.selectbox("Select Column:", numeric_columns)
+data_column = st.selectbox("Select numeric column:", numeric_columns)
 
-# Plotly chart
-fig = px.bar(df, x=df.index, y=data_view, labels={'x':'Index', 'y':data_view})
+# --- Detect date column ---
+date_column = None
+for col in df.columns:
+    if 'date' in col.lower():  # simple detection
+        date_column = col
+        break
+
+if date_column is None:
+    st.error("No date column found in dataset!")
+    st.stop()
+
+# Convert date column to datetime
+df[date_column] = pd.to_datetime(df[date_column])
+
+# --- Optional: choose aggregation ---
+granularity = st.selectbox("Select time granularity:", ["Daily", "Weekly", "Monthly"])
+
+# Aggregate data by date
+if granularity == "Daily":
+    df_grouped = df.groupby(df[date_column].dt.date)[data_column].sum().reset_index()
+elif granularity == "Weekly":
+    df_grouped = df.groupby(df[date_column].dt.to_period("W")).sum()[[data_column]].reset_index()
+    df_grouped[date_column] = df_grouped[date_column].dt.start_time
+else:  # Monthly
+    df_grouped = df.groupby(df[date_column].dt.to_period("M")).sum()[[data_column]].reset_index()
+    df_grouped[date_column] = df_grouped[date_column].dt.start_time
+
+# --- Plotly chart ---
+st.subheader(f"Plotly: {data_column} over time ({granularity})")
+fig = px.line(df_grouped, x=date_column, y=data_column, markers=True)
 st.plotly_chart(fig, use_container_width=True)
 
-# Altair chart
-df_alt = df.reset_index().rename(columns={'index':'Row'})
-alt_chart = alt.Chart(df_alt).mark_line(point=True).encode(
-    x='Row',
-    y=data_view
+# --- Altair chart ---
+st.subheader(f"Altair: {data_column} over time ({granularity})")
+alt_chart = alt.Chart(df_grouped).mark_line(point=True).encode(
+    x=date_column,
+    y=data_column
 ).interactive()
-st.subheader(f"Altair Chart: {data_view}")
 st.altair_chart(alt_chart, use_container_width=True)
+
+
+
 
 
 
