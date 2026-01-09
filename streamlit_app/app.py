@@ -1,56 +1,117 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import altair as alt
 
-st.title("Orders Over Time Dashboard")
+st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
+st.title("📊 Data Analysis Dashboard")
 
-# --- Load Excel file ---
-df = pd.read_excel("Data Analytics Intern Assignment - Data Set.xlsx", engine='openpyxl')
+# -------------------------------
+# Load Excel
+# -------------------------------
+@st.cache_data
+def load_excel():
+    return pd.read_excel(
+        "Data Analytics Intern Assignment - Data Set.xlsx",
+        sheet_name=None,
+        engine="openpyxl"
+    )
 
-# --- Detect numeric columns ---
-numeric_columns = df.select_dtypes(include='number').columns.tolist()
-data_column = st.selectbox("Select numeric column:", numeric_columns)
+workbook = load_excel()
 
-# --- Detect date column ---
-date_column = None
-for col in df.columns:
-    if 'date' in col.lower():  # simple detection
-        date_column = col
-        break
+# -------------------------------
+# Dropdowns
+# -------------------------------
+data_view = st.selectbox("Data View", ["Orders", "Sessions", "Calls"])
+time_granularity = st.selectbox("Time Granularity", ["Daily", "Weekly", "Monthly"])
 
-if date_column is None:
-    st.error("No date column found in dataset!")
-    st.stop()
+# -------------------------------
+# Sheet mapping (same as JS)
+# -------------------------------
+sheet_map = {
+    "Orders": "Orders_Raw",
+    "Sessions": "Sessions_Raw",
+    "Calls": "Calls_Raw"
+}
 
-# Convert date column to datetime
-df[date_column] = pd.to_datetime(df[date_column])
+df = workbook[sheet_map[data_view]]
 
-# --- Optional: choose aggregation ---
-granularity = st.selectbox("Select time granularity:", ["Daily", "Weekly", "Monthly"])
+# -------------------------------
+# Date & Entity mapping
+# -------------------------------
+if data_view == "Orders":
+    date_col = "Order Date"
+    entity_col = "Phone"
+    value_col = "Amount"
+    df[value_col] = pd.to_numeric(df[value_col], errors="coerce").fillna(0)
 
-# Aggregate data by date
-if granularity == "Daily":
-    df_grouped = df.groupby(df[date_column].dt.date)[data_column].sum().reset_index()
-elif granularity == "Weekly":
-    df_grouped = df.groupby(df[date_column].dt.to_period("W")).sum()[[data_column]].reset_index()
-    df_grouped[date_column] = df_grouped[date_column].dt.start_time
+elif data_view == "Sessions":
+    date_col = "Session Date"
+    entity_col = "Device ID"
+    value_col = None
+
+else:  # Calls
+    date_col = "Call Date"
+    entity_col = "Phone"
+    value_col = None
+
+# -------------------------------
+# Clean & prepare
+# -------------------------------
+df = df[[date_col, entity_col] + ([value_col] if value_col else [])].dropna()
+
+df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+df[entity_col] = df[entity_col].astype(str).str.replace(r"\D", "", regex=True)
+
+df = df.dropna(subset=[date_col, entity_col])
+
+# -------------------------------
+# Time Granularity
+# -------------------------------
+if time_granularity == "Daily":
+    df["TimeKey"] = df[date_col].dt.date
+
+elif time_granularity == "Weekly":
+    df["TimeKey"] = df[date_col].dt.to_period("W").astype(str)
+
 else:  # Monthly
-    df_grouped = df.groupby(df[date_column].dt.to_period("M")).sum()[[data_column]].reset_index()
-    df_grouped[date_column] = df_grouped[date_column].dt.start_time
+    df["TimeKey"] = df[date_col].dt.to_period("M").astype(str)
 
-# --- Plotly chart ---
-st.subheader(f"Plotly: {data_column} over time ({granularity})")
-fig = px.line(df_grouped, x=date_column, y=data_column, markers=True)
+# -------------------------------
+# Deduplicate (same logic as JS)
+# -------------------------------
+df = df.drop_duplicates(subset=["TimeKey", entity_col])
+
+# -------------------------------
+# Aggregate
+# -------------------------------
+if value_col:
+    result = df.groupby("TimeKey")[value_col].sum().reset_index()
+    y_label = "Total Amount"
+else:
+    result = df.groupby("TimeKey").size().reset_index(name="Count")
+    y_label = "Count"
+
+# -------------------------------
+# Sort by time
+# -------------------------------
+result = result.sort_values("TimeKey")
+
+# -------------------------------
+# Plot
+# -------------------------------
+fig = px.bar(
+    result,
+    x="TimeKey",
+    y=result.columns[1],
+    title=f"{data_view} ({time_granularity})",
+    labels={
+        "TimeKey": "Date",
+        result.columns[1]: y_label
+    }
+)
+
 st.plotly_chart(fig, use_container_width=True)
 
-# --- Altair chart ---
-st.subheader(f"Altair: {data_column} over time ({granularity})")
-alt_chart = alt.Chart(df_grouped).mark_line(point=True).encode(
-    x=date_column,
-    y=data_column
-).interactive()
-st.altair_chart(alt_chart, use_container_width=True)
 
 
 
